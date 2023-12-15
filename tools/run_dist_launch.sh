@@ -27,3 +27,6 @@ python ./tools/launch.py \
     --master_port ${MASTER_PORT} \
     --nproc_per_node ${GPUS_PER_NODE} \
     ${RUN_COMMAND}
+
+# GPUS_PER_NODE=8 ./tools/run_dist_launch.sh 8 ./configs/r50_deformable_detr.sh
+# GPUS_PER_NODE=1 ./tools/run_dist_launch.sh 1 ./configs/r50_deformable_detr.sh

@@ -132,12 +132,15 @@ class DeformableTransformer(nn.Module):
         lvl_pos_embed_flatten = []
         spatial_shapes = []
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
-            bs, c, h, w = src.shape
+            bs, c, h, w = src.shape # 2,256, (76,106)(38,53)(19,27)(10,14),hw是变化的，因此src_flatten的个数会变
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
             src = src.flatten(2).transpose(1, 2)
             mask = mask.flatten(1)
-            pos_embed = pos_embed.flatten(2).transpose(1, 2)
+            pos_embed = pos_embed.flatten(2).transpose(1, 2) # [bs,c,h,w] -> [bs,hw,c]
+           # scale-level position embedding  [bs,hw,c] + [1,1,c] -> [bs,hw,c]
+            # 每一层所有位置加上相同的level_embed 且 不同层的level_embed不同
+            # 所以这里pos_embed + level_embed，这样即使不同层特征有相同的w和h，那么也会产生不同的lvl_pos_embed  这样就可以区分了
             lvl_pos_embed = pos_embed + self.level_embed[lvl].view(1, 1, -1)
             lvl_pos_embed_flatten.append(lvl_pos_embed)
             src_flatten.append(src)
@@ -148,7 +151,12 @@ class DeformableTransformer(nn.Module):
         spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
-
+        # ==>> src_flatten.shape: torch.Size([2, 17008, 256])
+        # ==>> mask_flatten.shape: torch.Size([2, 17008])
+        # ==>> lvl_pos_embed_flatten.shape: torch.Size([2, 17008, 256])
+        # ==>> spatial_shapes.shape: torch.Size([4, 2])
+        # ==>> level_start_index.shape: torch.Size([4])
+        # ==>> valid_ratios.shape: torch.Size([2, 4, 2])
         # encoder
         memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
@@ -236,17 +244,35 @@ class DeformableTransformerEncoder(nn.Module):
 
     @staticmethod
     def get_reference_points(spatial_shapes, valid_ratios, device):
+        """
+        生成参考点   reference points  为什么参考点是中心点？  为什么要归一化？
+        spatial_shapes: 4个特征图的shape [4, 2]
+        valid_ratios: 4个特征图中非padding部分的边长占其边长的比例  [bs, 4, 2]  如全是1
+        device: cuda:0
+        """
         reference_points_list = []
         for lvl, (H_, W_) in enumerate(spatial_shapes):
-
+            # 0.5 -> 99.5 取100个点  0.5 1.5 2.5 ... 99.5
+            # 0.5 -> 149.5 取150个点 0.5 1.5 2.5 ... 149.5
+            # ref_y: [100, 150]  第一行：150个0.5  第二行：150个1.5 ... 第100行：150个99.5
+            # ref_x: [100, 150]  第一行：0.5 1.5...149.5   100行全部相同
             ref_y, ref_x = torch.meshgrid(torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
                                           torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))
+            # [100, 150] -> [bs, 15000]  150个0.5 + 150个1.5 + ... + 150个99.5 -> 除以100 归一化
             ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)
+            # [100, 150] -> [bs, 15000]  100个: 0.5 1.5 ... 149.5  -> 除以150 归一化
             ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)
+            # [bs, 15000, 2] 每一项都是xy
             ref = torch.stack((ref_x, ref_y), -1)
             reference_points_list.append(ref)
+        # list4: [bs, H/8*W/8, 2] + [bs, H/16*W/16, 2] + [bs, H/32*W/32, 2] + [bs, H/64*W/64, 2] ->
+        # [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 2]
         reference_points = torch.cat(reference_points_list, 1)
+        # reference_points: [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 2] -> [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 1, 2]
+        # valid_ratios: [1, 4, 2] -> [1, 1, 4, 2]
+        # 复制4份 每个特征点都有4个归一化参考点 -> [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 4, 2]
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
+        # 4个flatten后特征图的归一化参考点坐标
         return reference_points
 
     def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):

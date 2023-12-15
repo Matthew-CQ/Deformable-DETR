@@ -83,6 +83,8 @@ class BackboneBase(nn.Module):
         self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
 
     def forward(self, tensor_list: NestedTensor):
+        # 输入特征图  [bs, C, H, W]  ->  返回ResNet50中 layer2 layer3 layer4层的输出特征图
+        # 0 = [bs, 512, H/8, W/8]  1 = [bs, 1024, H/16, W/16]  2 = [bs, 2048, H/32, W/32]
         xs = self.body(tensor_list.tensors)
         out: Dict[str, NestedTensor] = {}
         for name, x in xs.items():

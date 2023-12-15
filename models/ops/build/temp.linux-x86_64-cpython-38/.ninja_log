@@ -1,0 +1,4 @@
+# ninja log v5
+0	2547	1702460236897613723	/mnt/data/chenq/project/Deformable-DETR/models/ops/build/temp.linux-x86_64-cpython-38/mnt/data/chenq/project/Deformable-DETR/models/ops/src/cpu/ms_deform_attn_cpu.o	2482b19e538cc3b3
+1	10061	1702460244401612053	/mnt/data/chenq/project/Deformable-DETR/models/ops/build/temp.linux-x86_64-cpython-38/mnt/data/chenq/project/Deformable-DETR/models/ops/src/cuda/ms_deform_attn_cuda.o	52d0ef5c4d8a5c8b
+1	12090	1702460246437611650	/mnt/data/chenq/project/Deformable-DETR/models/ops/build/temp.linux-x86_64-cpython-38/mnt/data/chenq/project/Deformable-DETR/models/ops/src/vision.o	c0d718d34e37a995
