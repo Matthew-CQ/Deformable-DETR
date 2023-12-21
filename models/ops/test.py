@@ -19,7 +19,7 @@ from functions.ms_deform_attn_func import MSDeformAttnFunction, ms_deform_attn_c
 
 
 N, M, D = 1, 2, 2
-Lq, L, P = 2, 2, 2
+Lq, L, P = 5, 2, 4
 shapes = torch.as_tensor([(6, 4), (3, 2)], dtype=torch.long).cuda()
 level_start_index = torch.cat((shapes.new_zeros((1, )), shapes.prod(1).cumsum(0)[:-1]))
 S = sum([(H*W).item() for H, W in shapes])
@@ -30,6 +30,16 @@ torch.manual_seed(3)
 
 @torch.no_grad()
 def check_forward_equal_with_pytorch_double():
+    '''
+    N batchsize
+    S 为Len_in = \sum_{l=0}^{L-1} H_l \cdot W_l, 总的像素输入个数, 每一leve下的 h*w 之和
+    M n_heads
+    D d_model // n_heads
+    Lq Length_{query}
+    L n_levels
+    P num of key points
+    level_start_index 为每一层 level 开始的 index 标记
+    '''
     value = torch.rand(N, S, M, D).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5

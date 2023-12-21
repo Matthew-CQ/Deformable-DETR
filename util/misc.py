@@ -319,7 +319,8 @@ def _max_by_axis(the_list):
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
-        # TODO make it support different-sized images
+        # TODO make it support different-sized images#
+        # 找到这一批次里最大的[C_max,H_max,W_max]
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
@@ -336,7 +337,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     return NestedTensor(tensor, mask)
 
 
-class NestedTensor(object):
+class NestedTensor(object): 
     def __init__(self, tensors, mask: Optional[Tensor]):
         self.tensors = tensors
         self.mask = mask

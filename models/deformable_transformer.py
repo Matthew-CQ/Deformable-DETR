@@ -43,6 +43,11 @@ class DeformableTransformer(nn.Module):
                                                           num_feature_levels, nhead, dec_n_points)
         self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
 
+        # scale-level position embedding  [4, 256]  可学习的
+        # 因为deformable detr用到了多尺度特征  经过backbone会生成4个不同尺度的特征图  但是如果还是使用原先的sine position embedding
+        # detr是针对h和w进行编码的 不同位置的特征点会对应不同的编码值 但是deformable detr不同的特征图的不同位置就有可能会产生相同的位置编码，就无法区分了
+        # 为了解决这个问题，这里引入level_embed这个遍历  不同层的特征图会有不同的level_embed 再让原先的每层位置编码+每层的level_embed
+        # 这样就很好的区分不同层的位置编码了  而且这个level_embed是可学习的
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
         if two_stage:
@@ -116,14 +121,26 @@ class DeformableTransformer(nn.Module):
 
     def get_valid_ratio(self, mask):
         _, H, W = mask.shape
+        # ==>> mask.shape: torch.Size([B, H/down, W/down])
         valid_H = torch.sum(~mask[:, :, 0], 1)
         valid_W = torch.sum(~mask[:, 0, :], 1)
         valid_ratio_h = valid_H.float() / H
         valid_ratio_w = valid_W.float() / W
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
+        # ==>> valid_ratio_h.shape: torch.Size([2])
+        # ==>> valid_ratio_w.shape: torch.Size([2])
+        # ==>> valid_ratio.shape: torch.Size([2, 2])
         return valid_ratio
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None):
+        """
+        srcs: list of features, pos_embeds: list of pose embedings for each feature map
+            [B, 256, H/8, W/8]
+            [B, 256, H/16, W/16]
+            [B, 256, H/32, W/32]
+            [B, 256, H/64, W/64]
+        query_embed=None
+        """
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -135,8 +152,8 @@ class DeformableTransformer(nn.Module):
             bs, c, h, w = src.shape # 2,256, (76,106)(38,53)(19,27)(10,14),hw是变化的，因此src_flatten的个数会变
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
-            src = src.flatten(2).transpose(1, 2)
-            mask = mask.flatten(1)
+            src = src.flatten(2).transpose(1, 2)  # [B, C, H, W] -> [B, C, HW] -> [B, HW, C]
+            mask = mask.flatten(1) # [B, HW]
             pos_embed = pos_embed.flatten(2).transpose(1, 2) # [bs,c,h,w] -> [bs,hw,c]
            # scale-level position embedding  [bs,hw,c] + [1,1,c] -> [bs,hw,c]
             # 每一层所有位置加上相同的level_embed 且 不同层的level_embed不同
@@ -271,6 +288,8 @@ class DeformableTransformerEncoder(nn.Module):
         # reference_points: [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 2] -> [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 1, 2]
         # valid_ratios: [1, 4, 2] -> [1, 1, 4, 2]
         # 复制4份 每个特征点都有4个归一化参考点 -> [bs, H/8*W/8+H/16*W/16+H/32*W/32+H/64*W/64, 4, 2]
+        # ==>> reference_points[:, :, None].shape: torch.Size([2, 10723, 1, 4, 2])
+        # ==>> valid_ratios[:, None].shape: torch.Size([2, 1, 4, 2])
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         # 4个flatten后特征图的归一化参考点坐标
         return reference_points

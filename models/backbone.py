@@ -88,8 +88,9 @@ class BackboneBase(nn.Module):
         xs = self.body(tensor_list.tensors)
         out: Dict[str, NestedTensor] = {}
         for name, x in xs.items():
-            m = tensor_list.mask
+            m = tensor_list.mask # [B, H, W]
             assert m is not None
+            # [B, H, W] -> [1, B, H, W] -> [B, H/8, W/8] ....
             mask = F.interpolate(m[None].float(), size=x.shape[-2:]).to(torch.bool)[0]
             out[name] = NestedTensor(x, mask)
         return out
