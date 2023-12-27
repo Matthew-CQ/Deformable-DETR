@@ -251,7 +251,7 @@ __global__ void ms_deformable_im2col_gpu_kernel(const int n,
                                                 scalar_t *data_col)
 {
   /*
-  n is um_kernels = batch_size * num_query * num_heads * channels 
+  n is num_kernels = batch_size * num_query * num_heads * channels 
   */
   CUDA_KERNEL_LOOP(index, n)
   {

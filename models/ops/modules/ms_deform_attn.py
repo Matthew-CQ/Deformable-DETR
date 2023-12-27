@@ -101,7 +101,8 @@ class MSDeformAttn(nn.Module):
 
         :return output                     (N, Length_{query}, C)
         """
-        # query为input_flatten+pos 的特征, encoder 中Len_q=Len_in, decoder中
+        # query为input_flatten+pos 的特征, 
+        # encoder 中Len_q = Len_in = all feature map, decoder 中Len_q=300
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in

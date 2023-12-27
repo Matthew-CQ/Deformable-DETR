@@ -196,7 +196,7 @@ class DeformableTransformer(nn.Module):
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
             query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
         else:
-            #! query_embed 定义在 deformable_detr.py下 deformableDETR 下，
+            #! query_embed 定义在 deformable_detr.py的 deformableDETR 下，
             # self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
             # if not self.two_stage:
             #     query_embeds = self.query_embed.weight 后送入 transformer
