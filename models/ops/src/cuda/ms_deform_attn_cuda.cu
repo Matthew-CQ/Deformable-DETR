@@ -37,17 +37,25 @@ at::Tensor ms_deform_attn_cuda_forward(
     AT_ASSERTM(sampling_loc.type().is_cuda(), "sampling_loc must be a CUDA tensor");
     AT_ASSERTM(attn_weight.type().is_cuda(), "attn_weight must be a CUDA tensor");
 
+    /*
+    value: (N, \sum_{l=0}^{L-1} H_l \cdot W_l, n_heads, C//n_heads)
+    spatial_shapes: (n_levels, 2)
+    level_start_index: (n_levels, )
+    sampling_loc: (N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
+    atten_weight: [N, Len_q, n_heads, n_levels, n_points]
+    im2col_step = 64 # 用于cuda算子
+    */
     const int batch = value.size(0);
     const int spatial_size = value.size(1);
     const int num_heads = value.size(2);
-    const int channels = value.size(3);
+    const int channels = value.size(3); // C//n_heads
 
     const int num_levels = spatial_shapes.size(0);
 
     const int num_query = sampling_loc.size(1);
     const int num_point = sampling_loc.size(4);
 
-    const int im2col_step_ = std::min(batch, im2col_step);
+    const int im2col_step_ = std::min(batch, im2col_step); // batch
 
     AT_ASSERTM(batch % im2col_step_ == 0, "batch(%d) must divide im2col_step(%d)", batch, im2col_step_);
     

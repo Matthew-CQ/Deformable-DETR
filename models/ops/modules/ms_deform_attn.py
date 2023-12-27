@@ -91,7 +91,7 @@ class MSDeformAttn(nn.Module):
 
     def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
         """
-        :param query                       (N, Length_{query}, C)
+        :param query                       (N, Length_{query}, C), self.with_pos_embed(src, pos), [B, #of each level feat map, C]
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
                                         or (N, Length_{query}, n_levels, 4), add additional (w, h) to form reference boxes
         :param input_flatten               (N, \sum_{l=0}^{L-1} H_l \cdot W_l, C)
@@ -101,20 +101,31 @@ class MSDeformAttn(nn.Module):
 
         :return output                     (N, Length_{query}, C)
         """
+        # query为input_flatten+pos 的特征, encoder 中Len_q=Len_in, decoder中
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:
+            # padding mask 为 1 的部分（没有数据）的 feature 设置为 0
             value = value.masked_fill(input_padding_mask[..., None], float(0))
+        # 对 value (N, \sum_{l=0}^{L-1} H_l \cdot W_l, C) 拆分为多个 head，(N, \sum_{l=0}^{L-1} H_l \cdot W_l, n_heads, C//n_heads)
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
+        # 每个head下，每个level下取值 4 个点的 xy
         sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
+        # 从query 中提取attention weight，而后在每一个 head 上进行 soft max 操作
+        # [N, Len_q, n_heads, n_levels, n_points]
         attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
         attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
-        # N, Len_q, n_heads, n_levels, n_points, 2
+
         if reference_points.shape[-1] == 2:
+            # offset_normalizer [n_levels, 2], xy对调了
             offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+            # (N, Length_{query}, 1, n_levels, 1, 2) + 
+            # (N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)/ [1, 1, 1, n_levels,1, 2]
+            # sampling_offsets 首先在n_levels每一层面进行归一化，而后同在在每个 level 上加上 reference_points
+            # sampling_offsets维度为(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
             sampling_locations = reference_points[:, :, None, :, None, :] \
                                  + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
         elif reference_points.shape[-1] == 4:
@@ -126,5 +137,7 @@ class MSDeformAttn(nn.Module):
         # 调用MSDeformAttnFunction cuda 函数
         output = MSDeformAttnFunction.apply(
             value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
+        # ==>> sampling_locations.shape: torch.Size([2, 10723, 8, 4, 4, 2])
+        # ==>> output.shape: torch.Size([2, 10723, 256])
         output = self.output_proj(output)
         return output

@@ -139,7 +139,7 @@ class DeformableTransformer(nn.Module):
             [B, 256, H/16, W/16]
             [B, 256, H/32, W/32]
             [B, 256, H/64, W/64]
-        query_embed=None
+        query_embed: [num_queries, hidden_dim*2
         """
         assert self.two_stage or query_embed is not None
 
@@ -175,6 +175,7 @@ class DeformableTransformer(nn.Module):
         # ==>> level_start_index.shape: torch.Size([4])
         # ==>> valid_ratios.shape: torch.Size([2, 4, 2])
         # encoder
+        # 在 encoder 中，会依据 spatial_shapes 来计算reference_points
         memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         # prepare input for decoder
@@ -195,20 +196,42 @@ class DeformableTransformer(nn.Module):
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
             query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
         else:
+            #! query_embed 定义在 deformable_detr.py下 deformableDETR 下，
+            # self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
+            # if not self.two_stage:
+            #     query_embeds = self.query_embed.weight 后送入 transformer
+            # 这里拆分为两个query_embed, tgt
             query_embed, tgt = torch.split(query_embed, c, dim=1)
             query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
+            # reference通过预测得到，非 encoder 以固定的形式
             reference_points = self.reference_points(query_embed).sigmoid()
             init_reference_out = reference_points
 
         # decoder
+        # ==>> tgt.shape: torch.Size([2, 300, 256])
+        # ==>> reference_points.shape: torch.Size([2, 300, 2])
+        # ==>> memory.shape: torch.Size([2, 10723, 256])
+        # ==>> spatial_shapes.shape: torch.Size([4, 2])
+        # ==>> level_start_index.shape: torch.Size([4])
+        # ==>> valid_ratios.shape: torch.Size([2, 4, 2])
+        # ==>> query_embed.shape: torch.Size([2, 300, 256])
+        # ==>> mask_flatten.shape: torch.Size([2, 10723])
+        # 在 decoder 中，reference_points直接预测得到
         hs, inter_references = self.decoder(tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten)
+        # 因为return_intermediate_dec = True
+        # ==>> hs.shape: torch.Size([6, 2, 300, 256])
+        # ==>> inter_references.shape: torch.Size([6, 2, 300, 2])
 
         inter_references_out = inter_references
         if self.two_stage:
             return hs, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact
+        # ==>> inter_references_out.shape: torch.Size([6, 2, 300, 2])
+        # ==>> init_reference_out.shape: torch.Size([2, 300, 2])
+        # ==>> hs.shape: torch.Size([6, 2, 300, 256])
         return hs, init_reference_out, inter_references_out, None, None
+
 
 
 class DeformableTransformerEncoderLayer(nn.Module):
@@ -340,11 +363,13 @@ class DeformableTransformerDecoderLayer(nn.Module):
     def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None):
         # self attention
         q = k = self.with_pos_embed(tgt, query_pos)
+        # tgt.transpose(0, 1))[0] is v
         tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
 
         # cross attention
+        # q: self.with_pos_embed(tgt, query_pos), v,k : src
         tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                reference_points,
                                src, src_spatial_shapes, level_start_index, src_padding_mask)
@@ -379,7 +404,17 @@ class DeformableTransformerDecoder(nn.Module):
                                          * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
             else:
                 assert reference_points.shape[-1] == 2
+                # [B, len_q, 1, 2] * [B, 1, num_level, 2] = [B, len_q, num_level, 2]
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
+                print(f"==>> reference_points_input.shape: {reference_points_input.shape}")
+
+            # ==>> output.shape: torch.Size([2, 300, 256])
+            # ==>> query_pos.shape: torch.Size([2, 300, 256])
+            # ==>> reference_points_input.shape: torch.Size([2, 300, 4, 2])
+            # ==>> src.shape: torch.Size([2, 10723, 256])
+            # ==>> src_spatial_shapes.shape: torch.Size([4, 2])
+            # ==>> src_level_start_index.shape: torch.Size([4])
+            # ==>> src_padding_mask.shape: torch.Size([2, 10723])
             output = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask)
 
             # hack implementation for iterative bounding box refinement

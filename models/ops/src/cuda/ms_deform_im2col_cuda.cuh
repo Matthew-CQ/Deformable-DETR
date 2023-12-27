@@ -250,6 +250,9 @@ __global__ void ms_deformable_im2col_gpu_kernel(const int n,
                                                 const int num_point,
                                                 scalar_t *data_col)
 {
+  /*
+  n is um_kernels = batch_size * num_query * num_heads * channels 
+  */
   CUDA_KERNEL_LOOP(index, n)
   {
     int _temp = index;
@@ -264,6 +267,7 @@ __global__ void ms_deformable_im2col_gpu_kernel(const int n,
 
     scalar_t *data_col_ptr = data_col + index;
     int data_weight_ptr = sampling_index * num_levels * num_point;
+    // 相当于乘以 2
     int data_loc_w_ptr = data_weight_ptr << 1;
     const int qid_stride = num_heads * channels;
     const int data_value_ptr_init_offset = b_col * spatial_size * qid_stride;
@@ -278,15 +282,18 @@ __global__ void ms_deformable_im2col_gpu_kernel(const int n,
       const scalar_t *data_value_ptr = data_value + (data_value_ptr_init_offset + level_start_id * qid_stride);
       for (int p_col=0; p_col < num_point; ++p_col)
       {
+        // 每个 level 下每个关
         const scalar_t loc_w = data_sampling_loc[data_loc_w_ptr];
         const scalar_t loc_h = data_sampling_loc[data_loc_w_ptr + 1];
         const scalar_t weight = data_attn_weight[data_weight_ptr];
 
+        // 获取h 和 w 的值
         const scalar_t h_im = loc_h * spatial_h - 0.5;
         const scalar_t w_im = loc_w * spatial_w - 0.5;
 
         if (h_im > -1 && w_im > -1 && h_im < spatial_h && w_im < spatial_w)
         {
+          // 依据 h_im 和 w_im 使用双线性差值提取值，而后乘以注意值
           col += ms_deform_attn_im2col_bilinear(data_value_ptr, spatial_h, spatial_w, num_heads, channels, h_im, w_im, m_col, c_col) * weight;
         }
 

@@ -55,6 +55,7 @@ class DeformableDETR(nn.Module):
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.num_feature_levels = num_feature_levels
         if not two_stage:
+            # 为何要乘以 2？因为一个为 query，一个为 query pose
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
@@ -154,29 +155,42 @@ class DeformableDETR(nn.Module):
         query_embeds = None
         if not self.two_stage:
             query_embeds = self.query_embed.weight
+        # ==>> inter_references_out.shape: torch.Size([6, 2, 300, 2])
+        # ==>> init_reference_out.shape: torch.Size([2, 300, 2])
+        # ==>> hs.shape: torch.Size([6, 2, 300, 256])
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = self.transformer(srcs, masks, pos, query_embeds)
 
         outputs_classes = []
         outputs_coords = []
+        # 每一个 decoder中间输出 都进行预测
         for lvl in range(hs.shape[0]):
             if lvl == 0:
                 reference = init_reference
             else:
                 reference = inter_references[lvl - 1]
             reference = inverse_sigmoid(reference)
+            # self.class_embed = nn.Linear(hidden_dim, num_classes)
+            # self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+            # self.class_embed = nn.ModuleList([self.class_embed for _ in range(num_pred)])
+            # self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred)])
+            # 对一每一个 decoder layer 输出出来的特征都使用 linear 进行预测class 以及 bbox，
+            # bbox_embed则是使用六层累加的方式，但是只调整中心点
             outputs_class = self.class_embed[lvl](hs[lvl])
             tmp = self.bbox_embed[lvl](hs[lvl])
             if reference.shape[-1] == 4:
                 tmp += reference
             else:
                 assert reference.shape[-1] == 2
+                # [2, 300, 4] + [2, 300, 2]
                 tmp[..., :2] += reference
             outputs_coord = tmp.sigmoid()
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
-
+        # ==>> outputs_class.shape: torch.Size([6, 2, 300, 91])
+        # ==>> outputs_coord.shape: torch.Size([6, 2, 300, 4])
+        # 只取出最后一层
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
